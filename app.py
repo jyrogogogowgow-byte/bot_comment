@@ -42,73 +42,80 @@ def extract_today_matches():
     results = []
     seen = set()
 
-    leagues = soup.select("section, .mec-container, .elementor-widget-wrap, div")
+    # البحث عن كل مسابقات اليوم
+    competitions = soup.select(".comp_matches_list.matches_list")
+    for comp in competitions:
+        league_title_el = comp.select_one(".comp_separator .title")
+        league_title = league_title_el.get_text(strip=True) if league_title_el else ""
 
-    for league_block in leagues:
-        league_title = ""
-        title_el = league_block.find(["h2", "h3", "h4", "h5"])
-        if title_el:
-            league_title = title_el.get_text(strip=True)
-        if not league_title or len(league_title) < 3:
+        if not league_title:
             continue
 
-        match_blocks = league_block.select(".mec-row, .match-item, li, .mec, .mec-table")
+        match_blocks = comp.select(".single_match")
         for block in match_blocks:
-            txt = block.get_text(" ", strip=True)
-            if not txt:
+            # أسماء الفرق
+            home_el = block.select_one(".hometeam .the_team")
+            away_el = block.select_one(".awayteam .the_team")
+            if not home_el or not away_el:
                 continue
+            home = clean_name(home_el.get_text(strip=True))
+            away = clean_name(away_el.get_text(strip=True))
 
-            today_str = datetime.now().strftime("%Y-%m-%d")
-            if today_str not in txt and re.search(r"\d{4}-\d{2}-\d{2}", txt):
-                continue
+            # شعارات الفرق
+            logo_home_el = block.select_one(".hometeam img.team_logo")
+            logo_away_el = block.select_one(".awayteam img.team_logo")
+            logo_home = normalize_src(logo_home_el.get("src")) if logo_home_el else ""
+            logo_away = normalize_src(logo_away_el.get("src")) if logo_away_el else ""
 
-            time_match = re.search(r"\b([01]?\d|2[0-3]):[0-5]\d\b", txt)
-            time_ = (time_match.group(0) + ":00") if time_match else ""
+            # الحالة
+            status_span = block.select_one(".match_status .status_box span")
+            status = status_span.get_text(strip=True) if status_span else "غير معروف"
 
-            if "انتهت" in txt:
-                status = "انتهت"
-            elif "لم تبدأ" in txt:
-                status = "لم تبدأ"
-            elif "مباشر" in txt or "Live" in txt:
-                status = "جارية"
+            # الوقت الدقيق
+            otime_span = block.select_one(".the_otime")
+            if otime_span:
+                time_ = otime_span.get_text(strip=True).split(" ")[1] + ":00"
             else:
-                status = "غير معروف"
+                # fallback إلى الوقت الظاهر
+                time_span = block.select_one(".the_time")
+                if time_span:
+                    t = time_span.get_text(strip=True)
+                    # تحويل صيغة 2:00 م إلى 24 ساعة
+                    try:
+                        dt = datetime.strptime(t, "%I:%M %p")
+                        time_ = dt.strftime("%H:%M:%S")
+                    except:
+                        time_ = ""
+                else:
+                    time_ = ""
 
-            imgs = [normalize_src(img.get("src")) for img in block.find_all("img") if img.get("src")]
-            logo_home = imgs[0] if len(imgs) > 0 else ""
-            logo_away = imgs[1] if len(imgs) > 1 else ""
-
-            parts = re.split(r"\s+vs\.?\s+|\s+مقابل\s+|\s+[-–—:]\s+", txt)
-            parts = [clean_name(p) for p in parts if p.strip()]
-
-            # ===== استخراج القناة والمعلق بدقة =====
+            # القناة والمعلق
             channel = ""
             commentator = ""
-            match_channels = block.select_one(".match_channels")
+            match_channels = block.select_one(".match_channels .channel_box")
             if match_channels:
-                channel_el = match_channels.select_one(".channel")
-                commentator_el = match_channels.select_one(".commentators")
-                channel = channel_el.get_text(strip=True) if channel_el else ""
-                commentator = commentator_el.get_text(strip=True) if commentator_el else ""
+                ch_el = match_channels.select_one(".channel")
+                cm_el = match_channels.select_one(".commentators")
+                channel = ch_el.get_text(strip=True) if ch_el else ""
+                commentator = cm_el.get_text(strip=True) if cm_el else ""
 
-            if len(parts) >= 2:
-                home, away = parts[0], parts[1]
-                key = f"{league_title}-{home}-{away}-{time_}"
-                if key in seen:
-                    continue
-                seen.add(key)
+            # مفتاح لتفادي التكرار
+            key = f"{league_title}-{home}-{away}-{time_}"
+            if key in seen:
+                continue
+            seen.add(key)
 
-                results.append({
-                    "league": league_title,
-                    "home": home,
-                    "away": away,
-                    "time": time_,
-                    "status": status,
-                    "logohome": logo_home,
-                    "logoaway": logo_away,
-                    "commentator": commentator,
-                    "channel": channel
-                })
+            results.append({
+                "league": league_title,
+                "home": home,
+                "away": away,
+                "time": time_,
+                "status": status,
+                "logohome": logo_home,
+                "logoaway": logo_away,
+                "commentator": commentator,
+                "channel": channel
+            })
 
     return results
 
