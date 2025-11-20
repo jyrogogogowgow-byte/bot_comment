@@ -81,12 +81,11 @@ def extract_today_matches():
             parts = re.split(r"\s+vs\.?\s+|\s+مقابل\s+|\s+[-–—:]\s+", txt)
             parts = [clean_name(p) for p in parts if p.strip()]
 
-            # استخراج المعلق
-            commentator_el = block.find("div", class_="commentators")
+            # ===== استخراج المعلق والقناة بشكل آمن =====
+            commentator_el = block.select_one(".commentators")
             commentator = commentator_el.get_text(strip=True) if commentator_el else ""
 
-            # استخراج القناة
-            channel_el = block.find("div", class_="channel")
+            channel_el = block.select_one(".channel")
             channel = channel_el.get_text(strip=True) if channel_el else ""
 
             if len(parts) >= 2:
