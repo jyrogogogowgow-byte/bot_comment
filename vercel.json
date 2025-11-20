@@ -1,11 +1,9 @@
 {
   "version": 2,
-  "functions": {
-    "api/abwjdan.py": {
-      "runtime": "vercel-python@0.9.0"
-    }
-  },
+  "builds": [
+    { "src": "app.py", "use": "@vercel/python" }
+  ],
   "routes": [
-    { "src": "/api/abwjdan", "dest": "api/abwjdan.py" }
+    { "src": "/api/abwjdan", "dest": "app.py" }
   ]
 }
