@@ -1,20 +1,7 @@
-from flask import Flask, jsonify
 import requests
 from bs4 import BeautifulSoup
 import re
 from datetime import datetime, timedelta
-
-app = Flask(__name__)
-
-URL = "https://jdwel.com/today/"
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-}
-
-cached_data = None
-last_update = None
-UPDATE_INTERVAL = timedelta(minutes=5)
 
 def normalize_src(src, base="https://jdwel.com"):
     if not src:
@@ -31,6 +18,15 @@ def clean_name(txt: str) -> str:
     txt = txt.strip(" -–—: ")
     return txt if txt else "تيك"
 
+URL = "https://jdwel.com/today/"
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+}
+UPDATE_INTERVAL = timedelta(minutes=5)
+cached_data = None
+last_update = None
+
 def extract_today_matches():
     try:
         res = requests.get(URL, headers=HEADERS, timeout=20)
@@ -41,7 +37,6 @@ def extract_today_matches():
 
     results = []
     seen = set()
-
     leagues = soup.select("section, .mec-container, .elementor-widget-wrap, div")
 
     for league_block in leagues:
@@ -119,7 +114,7 @@ def get_cached_matches():
                  "channel":"تيك","commentator":"تيك"}]
     return cached_data
 
-# ==== Vercel handler ====
-def handler(request, *args, **kwargs):
+def handler(request):
+    from vercel.responses import JSONResponse
     matches = get_cached_matches()
-    return jsonify(matches)
+    return JSONResponse(matches)
