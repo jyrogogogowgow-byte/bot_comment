@@ -81,12 +81,15 @@ def extract_today_matches():
             parts = re.split(r"\s+vs\.?\s+|\s+مقابل\s+|\s+[-–—:]\s+", txt)
             parts = [clean_name(p) for p in parts if p.strip()]
 
-            # ===== استخراج المعلق والقناة بشكل آمن =====
-            commentator_el = block.select_one(".commentators")
-            commentator = commentator_el.get_text(strip=True) if commentator_el else ""
-
-            channel_el = block.select_one(".channel")
-            channel = channel_el.get_text(strip=True) if channel_el else ""
+            # ===== استخراج القناة والمعلق بدقة =====
+            channel = ""
+            commentator = ""
+            match_channels = block.select_one(".match_channels")
+            if match_channels:
+                channel_el = match_channels.select_one(".channel")
+                commentator_el = match_channels.select_one(".commentators")
+                channel = channel_el.get_text(strip=True) if channel_el else ""
+                commentator = commentator_el.get_text(strip=True) if commentator_el else ""
 
             if len(parts) >= 2:
                 home, away = parts[0], parts[1]
@@ -115,7 +118,6 @@ def get_cached_matches():
     if cached_data is None or last_update is None or now - last_update > UPDATE_INTERVAL:
         cached_data = extract_today_matches()
         last_update = now
-    # إذا لم توجد مباريات اليوم، نرجع عنصر فارغ مع المفاتيح الجديدة
     if not cached_data:
         return [{"league":"","home":"","away":"","time":"","status":"","logohome":"","logoaway":"","commentator":"","channel":""}]
     return cached_data
