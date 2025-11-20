@@ -3,7 +3,7 @@ from flask import Flask, jsonify
 import requests
 from bs4 import BeautifulSoup
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
@@ -12,6 +12,10 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 }
+
+cached_data = None
+last_update = None
+UPDATE_INTERVAL = timedelta(minutes=5)
 
 def normalize_src(src, base="https://jdwel.com"):
     if not src:
@@ -28,12 +32,15 @@ def clean_name(txt: str) -> str:
     return txt.strip(" -–—: ")
 
 def extract_today_matches():
-    res = requests.get(URL, headers=HEADERS, timeout=20)
-    res.raise_for_status()
-    soup = BeautifulSoup(res.text, "html.parser")
+    try:
+        res = requests.get(URL, headers=HEADERS, timeout=20)
+        res.raise_for_status()
+        soup = BeautifulSoup(res.text, "html.parser")
+    except:
+        return []
 
     results = []
-    seen = set()  # لتفادي التكرار
+    seen = set()
 
     leagues = soup.select("section, .mec-container, .elementor-widget-wrap, div")
 
@@ -74,6 +81,14 @@ def extract_today_matches():
             parts = re.split(r"\s+vs\.?\s+|\s+مقابل\s+|\s+[-–—:]\s+", txt)
             parts = [clean_name(p) for p in parts if p.strip()]
 
+            # استخراج المعلق
+            commentator_el = block.find("div", class_="commentators")
+            commentator = commentator_el.get_text(strip=True) if commentator_el else ""
+
+            # استخراج القناة
+            channel_el = block.find("div", class_="channel")
+            channel = channel_el.get_text(strip=True) if channel_el else ""
+
             if len(parts) >= 2:
                 home, away = parts[0], parts[1]
                 key = f"{league_title}-{home}-{away}-{time_}"
@@ -85,26 +100,31 @@ def extract_today_matches():
                     "league": league_title,
                     "home": home,
                     "away": away,
-                    "status": status,
                     "time": time_,
+                    "status": status,
                     "logohome": logo_home,
-                    "logoaway": logo_away
+                    "logoaway": logo_away,
+                    "commentator": commentator,
+                    "channel": channel
                 })
 
     return results
 
+def get_cached_matches():
+    global cached_data, last_update
+    now = datetime.now()
+    if cached_data is None or last_update is None or now - last_update > UPDATE_INTERVAL:
+        cached_data = extract_today_matches()
+        last_update = now
+    # إذا لم توجد مباريات اليوم، نرجع عنصر فارغ مع المفاتيح الجديدة
+    if not cached_data:
+        return [{"league":"","home":"","away":"","time":"","status":"","logohome":"","logoaway":"","commentator":"","channel":""}]
+    return cached_data
+
 @app.route("/api/abwjdan", methods=["GET"])
-def get_matches():
-    try:
-        matches = extract_today_matches()
-        return jsonify({
-            "success": True,
-            "date": datetime.now().strftime("%Y-%m-%d"),
-            "count": len(matches),
-            "matches": matches
-        })
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+def api_matches():
+    matches = get_cached_matches()
+    return jsonify(matches)
 
 if __name__ == "__main__":
     app.run(debug=True)
