@@ -1,138 +1,119 @@
-# app.py
-from flask import Flask, jsonify
 import requests
 from bs4 import BeautifulSoup
-import re
-from datetime import datetime, timedelta
+import json
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad
+import base64
+import hashlib
+import time
 
-app = Flask(__name__)
+# -----------------------------
+# دالة تشفير AES/CBC/PKCS7
+# -----------------------------
+def encrypt_aes_cbc(message, password):
+    key = hashlib.sha256(password.encode('utf-8')).digest()
+    iv = bytes([0]*16)  # IV ثابت
+    cipher = AES.new(key, AES.MODE_CBC, iv)
+    ciphertext = cipher.encrypt(pad(message.encode('utf-8'), AES.block_size))
+    encoded = base64.b64encode(ciphertext).decode('utf-8')
+    return encoded
 
-URL = "https://jdwel.com/today/"
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-}
+# -----------------------------
+# دالة تحديث المنشور
+# -----------------------------
+def update_facebook_post(encrypted_json, access_token, post_id):
+    payload = {
+        "message": encrypted_json,
+        "access_token": access_token
+    }
+    fb_url = f"https://graph.facebook.com/v17.0/{post_id}"
+    response = requests.post(fb_url, data=payload)
+    if response.status_code == 200:
+        print("✅ المنشور تم تعديله بنجاح بنفس JSON المشفر")
+    else:
+        print("❌ خطأ في تعديل المنشور:", response.text)
 
-cached_data = None
-last_update = None
-UPDATE_INTERVAL = timedelta(minutes=5)
+# -----------------------------
+# معلومات فيسبوك
+# -----------------------------
+ACCESS_TOKEN = "EAAnpHaKS0ZAsBQGnFzMdPXgJl7WOHrhDvRchIECkxD6VuZBLMHYJcQEv9CHfsyPQTAcGXEPvSG1wsQZA3grOZBWTe7z434cxvkjjFGPiAVZBCJvlMnRKbK2d059sSbKcG3Khle9D8J01rLRm97zEQs8G6q7i6vULeU0rLyjt03vgglGmxWlaXq59pN66kKvmTcZC4w"
+POST_ID = "760975953758391_122155135934908910"
+PASSWORD = "mohamed"
 
-def normalize_src(src, base="https://jdwel.com"):
-    if not src:
-        return ""
-    if src.startswith("//"):
-        return "https:" + src
-    if src.startswith("/"):
-        return base.rstrip("/") + src
-    return src
-
-def clean_name(txt: str) -> str:
-    txt = re.sub(r"(صفحة المباراة|باقي على المباراة.*|لم تبدأ|انتهت|مباشر|LIVE)", "", txt, flags=re.I)
-    txt = re.sub(r"\d+", "", txt)
-    return txt.strip(" -–—: ")
-
-def extract_today_matches():
+# -----------------------------
+# حلقة لا نهائية لتحديث كل ساعة
+# -----------------------------
+while True:
     try:
-        res = requests.get(URL, headers=HEADERS, timeout=20)
-        res.raise_for_status()
-        soup = BeautifulSoup(res.text, "html.parser")
-    except:
-        return []
+        print("⏳ بدء التحديث...")
 
-    results = []
-    seen = set()
+        # -----------------------------
+        # 1️⃣ سحب المباريات من elkora
+        # -----------------------------
+        url = "https://www.elkora.ma/today?match_day=today"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "html.parser")
 
-    # البحث عن كل مسابقات اليوم
-    competitions = soup.select(".comp_matches_list.matches_list")
-    for comp in competitions:
-        league_title_el = comp.select_one(".comp_separator .title")
-        league_title = league_title_el.get_text(strip=True) if league_title_el else ""
+        matches_data = []
 
-        if not league_title:
-            continue
+        for match in soup.select("div.ebs-match"):
+            home_team_span = match.select_one(".ebs-team.home span")
+            away_team_span = match.select_one(".ebs-team.away span")
+            
+            home_team_name = home_team_span.get_text(strip=True) if home_team_span else ""
+            away_team_name = away_team_span.get_text(strip=True) if away_team_span else ""
 
-        match_blocks = comp.select(".single_match")
-        for block in match_blocks:
-            # أسماء الفرق
-            home_el = block.select_one(".hometeam .the_team")
-            away_el = block.select_one(".awayteam .the_team")
-            if not home_el or not away_el:
-                continue
-            home = clean_name(home_el.get_text(strip=True))
-            away = clean_name(away_el.get_text(strip=True))
+            home_img_tag = match.select_one(".ebs-team.home img")
+            away_img_tag = match.select_one(".ebs-team.away img")
 
-            # شعارات الفرق
-            logo_home_el = block.select_one(".hometeam img.team_logo")
-            logo_away_el = block.select_one(".awayteam img.team_logo")
-            logo_home = normalize_src(logo_home_el.get("src")) if logo_home_el else ""
-            logo_away = normalize_src(logo_away_el.get("src")) if logo_away_el else ""
+            home_img = home_img_tag["src"] if home_img_tag else ""
+            away_img = away_img_tag["src"] if away_img_tag else ""
 
-            # الحالة
-            status_span = block.select_one(".match_status .status_box span")
-            status = status_span.get_text(strip=True) if status_span else "غير معروف"
+            score_tag = match.select_one(".ebs-score")
+            score_text = score_tag.get_text(strip=True) if score_tag else ""
 
-            # الوقت الدقيق
-            otime_span = block.select_one(".the_otime")
-            if otime_span:
-                time_ = otime_span.get_text(strip=True).split(" ")[1] + ":00"
-            else:
-                # fallback إلى الوقت الظاهر
-                time_span = block.select_one(".the_time")
-                if time_span:
-                    t = time_span.get_text(strip=True)
-                    # تحويل صيغة 2:00 م إلى 24 ساعة
-                    try:
-                        dt = datetime.strptime(t, "%I:%M %p")
-                        time_ = dt.strftime("%H:%M:%S")
-                    except:
-                        time_ = ""
-                else:
-                    time_ = ""
+            status_tag = match.select_one(".match-status")
+            time_tag = match.select_one(".ebs-match-time")
+            match_status = status_tag.get_text(strip=True) if status_tag else ""
+            match_time = time_tag.get_text(strip=True).replace(match_status, "") if time_tag else ""
 
-            # القناة والمعلق
-            channel = ""
-            commentator = ""
-            match_channels = block.select_one(".match_channels .channel_box")
-            if match_channels:
-                ch_el = match_channels.select_one(".channel")
-                cm_el = match_channels.select_one(".commentators")
-                channel = ch_el.get_text(strip=True) if ch_el else ""
-                commentator = cm_el.get_text(strip=True) if cm_el else ""
+            if match_status == "مجدولة":
+                match_status = "لم تبدأ بعد"
 
-            # مفتاح لتفادي التكرار
-            key = f"{league_title}-{home}-{away}-{time_}"
-            if key in seen:
-                continue
-            seen.add(key)
-
-            results.append({
-                "league": league_title,
-                "home": home,
-                "away": away,
-                "time": time_,
-                "status": status,
-                "logohome": logo_home,
-                "logoaway": logo_away,
-                "commentator": commentator,
-                "channel": channel
+            matches_data.append({
+                "image1": home_img,
+                "name1": home_team_name,
+                "image2": away_img,
+                "name2": away_team_name,
+                "score": score_text,
+                "time": match_time,
+                "status": match_status
             })
 
-    return results
+        # تحويل القائمة إلى JSON
+        matches_json = json.dumps(matches_data, ensure_ascii=False, indent=4)
+        print("✅ JSON المباريات جاهز")
 
-def get_cached_matches():
-    global cached_data, last_update
-    now = datetime.now()
-    if cached_data is None or last_update is None or now - last_update > UPDATE_INTERVAL:
-        cached_data = extract_today_matches()
-        last_update = now
-    if not cached_data:
-        return [{"league":"","home":"","away":"","time":"","status":"","logohome":"","logoaway":"","commentator":"","channel":""}]
-    return cached_data
+        # -----------------------------
+        # 2️⃣ تشفير JSON
+        # -----------------------------
+        encrypted_json = encrypt_aes_cbc(matches_json, PASSWORD)
+        print("✅ JSON مشفر جاهز")
 
-@app.route("/api/abwjdan", methods=["GET"])
-def api_matches():
-    matches = get_cached_matches()
-    return jsonify(matches)
+        # -----------------------------
+        # 3️⃣ تعديل منشور فيسبوك
+        # -----------------------------
+        update_facebook_post(encrypted_json, ACCESS_TOKEN, POST_ID)
 
-if __name__ == "__main__":
-    app.run(debug=True)
+        # -----------------------------
+        # 4️⃣ انتظار ساعة قبل التكرار
+        # -----------------------------
+        print("⏰ الانتظار ساعة قبل التحديث القادم...")
+        time.sleep(3600)  # 3600 ثانية = ساعة
+
+    except Exception as e:
+        print("❌ حدث خطأ:", e)
+        print("⏳ إعادة المحاولة بعد دقيقة...")
+        time.sleep(60)  # انتظار دقيقة قبل المحاولة مرة أخرى
