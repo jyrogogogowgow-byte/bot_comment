@@ -75,7 +75,7 @@ def get_matches():
     return matches
 
 
-@app.route("/api/matches", methods=["GET"])
+@app.route("/api/abwjdan", methods=["GET"])
 def api_matches():
     data = get_matches()
     return jsonify({
