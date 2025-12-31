@@ -4,7 +4,7 @@ from bs4 import BeautifulSoup
 
 app = Flask(__name__)
 
-URL = "https://www.yallakora.com/match-center"
+URL = "https://www.yallakora.com/match-center?date=12/31/2025#days"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 }
