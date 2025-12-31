@@ -8,16 +8,21 @@ URL = "https://www.yallakora.com/match-center?date=12/31/2025#days"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 }
+BASE_URL = "https://www.yallakora.com"
+
 
 def get_matches():
-    response = requests.get(URL, headers=HEADERS, timeout=15)
-    soup = BeautifulSoup(response.text, "html.parser")
+    try:
+        response = requests.get(URL, headers=HEADERS, timeout=15)
+        response.raise_for_status()
+    except requests.RequestException as e:
+        return {"error": "Failed to fetch matches", "details": str(e)}
 
+    soup = BeautifulSoup(response.text, "html.parser")
     matches = []
 
     for item in soup.find_all("div", {"livescorematchid": True}):
         match = {}
-
         match["match_id"] = item.get("livescorematchid")
 
         # القناة
@@ -37,27 +42,63 @@ def get_matches():
         match["time"] = time.get_text(strip=True) if time else None
 
         # الفرق
-        teamA = item.find("div", class_="teamA")
-        teamB = item.find("div", class_="teamB")
+        teamA_div = item.find("div", class_="teamA")
+        teamB_div = item.find("div", class_="teamB")
 
         match["team_a"] = {
-            "name": teamA.find("p").get_text(strip=True) if teamA else None,
-            "logo": teamA.find("img").get("src") if teamA else None
+            "name": teamA_div.find("p").get_text(strip=True) if teamA_div else None,
+            "logo": teamA_div.find("img").get("src") if teamA_div else None,
+            "scorers": []
         }
 
         match["team_b"] = {
-            "name": teamB.find("p").get_text(strip=True) if teamB else None,
-            "logo": teamB.find("img").get("src") if teamB else None
+            "name": teamB_div.find("p").get_text(strip=True) if teamB_div else None,
+            "logo": teamB_div.find("img").get("src") if teamB_div else None,
+            "scorers": []
         }
+
+        # نتيجة المباراة
+        result_div = item.find("div", class_="matchResult")
+        if result_div:
+            match["score"] = {
+                "team_a": result_div.find("span", class_="a").get_text(strip=True),
+                "team_b": result_div.find("span", class_="b").get_text(strip=True)
+            }
+        else:
+            match["score"] = {"team_a": None, "team_b": None}
+
+        # من سجل الهدف
+        scorer_divs = item.find_all("div", class_="goal")
+        for goal in scorer_divs:
+            player = goal.find("a", class_="player")
+            if player:
+                player_name = player.find("span", class_="playerName").get_text(strip=True)
+                player_time = player.find("span", class_="time").get_text(strip=True)
+                player_link = BASE_URL + player.get("href")
+
+                # تحديد الفريق
+                parent_team_div = goal.find_parent("div", class_="team")
+                if parent_team_div and "teamA" in parent_team_div.get("class", []):
+                    match["team_a"]["scorers"].append({
+                        "name": player_name,
+                        "time": player_time,
+                        "link": player_link
+                    })
+                else:
+                    match["team_b"]["scorers"].append({
+                        "name": player_name,
+                        "time": player_time,
+                        "link": player_link
+                    })
 
         # الصور
         images = []
         for img in item.find_all("img"):
-            images.append({
-                "src": img.get("src"),
-                "alt": img.get("alt")
-            })
-
+            src = img.get("src")
+            alt = img.get("alt")
+            # نتجنب شعار الفريق إذا كان موجود بالفعل
+            if src not in [match["team_a"]["logo"], match["team_b"]["logo"]]:
+                images.append({"src": src, "alt": alt})
         match["images"] = images
 
         # الروابط
@@ -65,9 +106,8 @@ def get_matches():
         for a in item.find_all("a", href=True):
             links.append({
                 "text": a.get_text(strip=True),
-                "href": a["href"]
+                "href": BASE_URL + a["href"] if a["href"].startswith("/") else a["href"]
             })
-
         match["links"] = links
 
         matches.append(match)
@@ -80,7 +120,7 @@ def api_matches():
     data = get_matches()
     return jsonify({
         "source": "yallakora",
-        "count": len(data),
+        "count": len(data) if isinstance(data, list) else 0,
         "matches": data
     })
 
