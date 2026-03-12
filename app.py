@@ -1,34 +1,138 @@
-from flask import Flask, request, jsonify
 import requests
+import yt_dlp
+from flask import Flask, request
 
 app = Flask(__name__)
 
-VERIFY_TOKEN = "my_secret_verify_token"
-PAGE_ACCESS_TOKEN = "EAAnpHaKS0ZAsBQnxCc1YjIk0l2U1d6tuUl0JZBGCMzU3ZCAza4PaZBGKKn25mtlHtfcxL5sY7Fpjvu8yezyZApD3XHGAIH4jXEXGSIFRUFDqzew07QZBnjlfv8vZB0Rb9LsWaQaukyECOZAdgI44OKMdoMTxrXhn2EpWc4sZBf9ozouIF1nR1gv3n0BpRNJ5z73IOsSXzvp1lAgZDZD"
+PAGE_ACCESS_TOKEN = "EAAnpHaKS0ZAsBQ8Vp5Uvf7KM6hwcpL3J21JK9OzQ3aP9dnYqfPokgPV6hc5IG0LC2ZCiTWGkc5w2ijpcqD3jdlmZAcwlj6owIZB06ZBglKNVXNBVkk3eDTQmMyraKKj1SnGZBUUrl3uMHQ1KKT0J8Io6nNNL5SLZCEwTcpoN4vTzq3dZBXZCFzXHSA3ne13dI1XQGjAkuZBZATR"
+VERIFY_TOKEN = "ABCD1211113224"
 
-# Verification endpoint (من فيسبوك)
+
+# ===============================
+# استخراج الفيديو
+# ===============================
+
+def extract_video(url):
+
+    ydl_opts = {
+        "format": "best",
+        "quiet": True
+    }
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+
+        info = ydl.extract_info(url, download=False)
+
+        video_url = info.get("url")
+
+    return video_url
+
+
+# ===============================
+# VERIFY WEBHOOK
+# ===============================
+
 @app.route("/webhook", methods=["GET"])
 def verify():
-    token_sent = request.args.get("hub.verify_token")
-    challenge = request.args.get("hub.challenge")
-    if token_sent == VERIFY_TOKEN:
-        return str(challenge)
-    return "Invalid verification token"
 
-# Endpoint لاستقبال الأحداث
+    mode = request.args.get("hub.mode")
+    token = request.args.get("hub.verify_token")
+    challenge = request.args.get("hub.challenge")
+
+    if mode == "subscribe" and token == VERIFY_TOKEN:
+        return challenge, 200
+
+    return "Forbidden", 403
+
+
+# ===============================
+# RECEIVE MESSAGES
+# ===============================
+
 @app.route("/webhook", methods=["POST"])
 def webhook():
+
     data = request.json
-    for entry in data.get("entry", []):
-        for change in entry.get("changes", []):
-            value = change.get("value", {})
-            if value.get("item") == "comment":
-                comment_id = value["comment_id"]
-                # الرد التلقائي
-                message = "شكراً على تعليقك!"
-                reply_url = f"https://graph.facebook.com/v17.0/765581629976925_311300605297008/comments"
-                requests.post(reply_url, data={"message": message, "access_token": PAGE_ACCESS_TOKEN})
-    return "EVENT_RECEIVED", 200
+
+    if data.get("object") == "page":
+
+        for entry in data.get("entry", []):
+
+            for messaging_event in entry.get("messaging", []):
+
+                sender_id = messaging_event["sender"]["id"]
+
+                if "message" in messaging_event:
+
+                    message = messaging_event["message"]
+
+                    if "text" in message:
+
+                        text = message["text"]
+
+                        if "http" in text:
+
+                            send_text(sender_id, "⏳ جاري تحميل الفيديو...")
+
+                            try:
+
+                                video = extract_video(text)
+
+                                send_video(sender_id, video)
+
+                            except:
+
+                                send_text(sender_id, "❌ لم أستطع تحميل الفيديو")
+
+                        else:
+
+                            send_text(sender_id, "📩 أرسل رابط فيديو من أي منصة")
+
+    return "ok", 200
+
+
+# ===============================
+# SEND TEXT
+# ===============================
+
+def send_text(uid, text):
+
+    url = f"https://graph.facebook.com/v19.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
+
+    payload = {
+        "recipient": {"id": uid},
+        "message": {"text": text}
+    }
+
+    requests.post(url, json=payload)
+
+
+# ===============================
+# SEND VIDEO
+# ===============================
+
+def send_video(uid, video_url):
+
+    url = f"https://graph.facebook.com/v19.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
+
+    payload = {
+        "recipient": {"id": uid},
+        "message": {
+            "attachment": {
+                "type": "video",
+                "payload": {
+                    "url": video_url
+                }
+            }
+        }
+    }
+
+    requests.post(url, json=payload)
+
+
+# ===============================
+# RUN SERVER
+# ===============================
 
 if __name__ == "__main__":
-    app.run(port=5000)
+    app.run(host="0.0.0.0", port=3366)
