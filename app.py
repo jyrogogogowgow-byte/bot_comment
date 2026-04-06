@@ -1,138 +1,164 @@
+import json
 import requests
 import yt_dlp
+import re
+import time
 from flask import Flask, request
 
 app = Flask(__name__)
 
-PAGE_ACCESS_TOKEN = "EAAnpHaKS0ZAsBQ8Vp5Uvf7KM6hwcpL3J21JK9OzQ3aP9dnYqfPokgPV6hc5IG0LC2ZCiTWGkc5w2ijpcqD3jdlmZAcwlj6owIZB06ZBglKNVXNBVkk3eDTQmMyraKKj1SnGZBUUrl3uMHQ1KKT0J8Io6nNNL5SLZCEwTcpoN4vTzq3dZBXZCFzXHSA3ne13dI1XQGjAkuZBZATR"
-VERIFY_TOKEN = "ABCD1211113224"
+PAGE_ACCESS_TOKEN = "EAASKJ7rjAZBUBRNmYyOK5IEqe3grBs5KfG1sej5ZCiGwHqZCMwfBIu8pZBWNv1JAlcSTEKUJbBRDGfz8UDM0UuurKuqSMVbt46X1i9dJNZCRyTlzlpfzlN7RXfxojZCfqJ1tR9SD5lPyHEikVl49IlRVaC7oZAoYP4vbhCpDfkvzniKhDb4ngeW0H6wbJnakzyhiFMD4rzskwZDZD"
+VERIFY_TOKEN = "123456"
 
+processed_messages = set()
 
-# ===============================
-# استخراج الفيديو
-# ===============================
+# ==============================
+# تشغيل / إيقاف
+# ==============================
+bot_enabled = True
 
-def extract_video(url):
+# ==============================
+# استخراج الرابط
+# ==============================
+def extract_url(text):
+    urls = re.findall(r'(https?://[^\s]+)', text)
+    return urls[0] if urls else None
 
+# ==============================
+# استخراج direct video
+# ==============================
+def get_direct_video(url):
     ydl_opts = {
-        "format": "best",
-        "quiet": True
+        "quiet": True,
+        "nocheckcertificate": True
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-
         info = ydl.extract_info(url, download=False)
 
-        video_url = info.get("url")
+        if "formats" in info:
+            for f in reversed(info["formats"]):
+                if (
+                    f.get("ext") == "mp4"
+                    and f.get("acodec") != "none"
+                    and f.get("vcodec") != "none"
+                ):
+                    return f.get("url")
 
-    return video_url
+        return info.get("url")
 
+# ==============================
+# إرسال رسالة
+# ==============================
+def send_message(user_id, text):
+    url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
 
-# ===============================
-# VERIFY WEBHOOK
-# ===============================
-
-@app.route("/webhook", methods=["GET"])
-def verify():
-
-    mode = request.args.get("hub.mode")
-    token = request.args.get("hub.verify_token")
-    challenge = request.args.get("hub.challenge")
-
-    if mode == "subscribe" and token == VERIFY_TOKEN:
-        return challenge, 200
-
-    return "Forbidden", 403
-
-
-# ===============================
-# RECEIVE MESSAGES
-# ===============================
-
-@app.route("/webhook", methods=["POST"])
-def webhook():
-
-    data = request.json
-
-    if data.get("object") == "page":
-
-        for entry in data.get("entry", []):
-
-            for messaging_event in entry.get("messaging", []):
-
-                sender_id = messaging_event["sender"]["id"]
-
-                if "message" in messaging_event:
-
-                    message = messaging_event["message"]
-
-                    if "text" in message:
-
-                        text = message["text"]
-
-                        if "http" in text:
-
-                            send_text(sender_id, "⏳ جاري تحميل الفيديو...")
-
-                            try:
-
-                                video = extract_video(text)
-
-                                send_video(sender_id, video)
-
-                            except:
-
-                                send_text(sender_id, "❌ لم أستطع تحميل الفيديو")
-
-                        else:
-
-                            send_text(sender_id, "📩 أرسل رابط فيديو من أي منصة")
-
-    return "ok", 200
-
-
-# ===============================
-# SEND TEXT
-# ===============================
-
-def send_text(uid, text):
-
-    url = f"https://graph.facebook.com/v19.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
-
-    payload = {
-        "recipient": {"id": uid},
+    data = {
+        "recipient": {"id": user_id},
         "message": {"text": text}
     }
 
-    requests.post(url, json=payload)
+    requests.post(url, json=data)
 
+# ==============================
+# إرسال فيديو من URL
+# ==============================
+def send_video(user_id, video_url):
+    url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
 
-# ===============================
-# SEND VIDEO
-# ===============================
-
-def send_video(uid, video_url):
-
-    url = f"https://graph.facebook.com/v19.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
-
-    payload = {
-        "recipient": {"id": uid},
+    data = {
+        "recipient": {"id": user_id},
         "message": {
             "attachment": {
                 "type": "video",
                 "payload": {
-                    "url": video_url
+                    "url": video_url,
+                    "is_reusable": True
                 }
             }
         }
     }
 
-    requests.post(url, json=payload)
+    requests.post(url, json=data)
 
+# ==============================
+# Webhook Verification
+# ==============================
+@app.route('/webhook', methods=['GET'])
+def verify():
+    token = request.args.get("hub.verify_token")
+    challenge = request.args.get("hub.challenge")
 
-# ===============================
-# RUN SERVER
-# ===============================
+    if token == VERIFY_TOKEN:
+        return challenge
+    return "Error", 403
 
+# ==============================
+# Webhook الرئيسي
+# ==============================
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    global bot_enabled
+
+    data = request.json
+
+    for entry in data.get("entry", []):
+        for event in entry.get("messaging", []):
+
+            sender_id = event.get("sender", {}).get("id")
+            message = event.get("message", {})
+
+            if not sender_id or "mid" not in message:
+                continue
+
+            # منع التكرار
+            if message["mid"] in processed_messages:
+                continue
+            processed_messages.add(message["mid"])
+
+            text = message.get("text", "")
+
+            # أوامر
+            if text == "/stop":
+                bot_enabled = False
+                send_message(sender_id, "🛑 تم إيقاف البوت")
+                return "ok", 200
+
+            if text == "/start":
+                bot_enabled = True
+                send_message(sender_id, "✅ تم تشغيل البوت")
+                return "ok", 200
+
+            if not bot_enabled:
+                send_message(sender_id, "🛑 البوت متوقف")
+                return "ok", 200
+
+            # استخراج الرابط
+            url = extract_url(text)
+
+            if url:
+                send_message(sender_id, "⏳ جاري جلب الفيديو...")
+
+                try:
+                    video_url = get_direct_video(url)
+
+                    if not video_url:
+                        send_message(sender_id, "❌ لم أستطع استخراج الفيديو")
+                        return "ok", 200
+
+                    send_video(sender_id, video_url)
+
+                except Exception as e:
+                    print(e)
+                    send_message(sender_id, "❌ وقع خطأ")
+
+            else:
+                send_message(sender_id, "📩 أرسل رابط فيديو")
+
+    return "ok", 200
+
+# ==============================
+# تشغيل السيرفر
+# ==============================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run(port=5000)
